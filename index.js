@@ -166,9 +166,15 @@
         this._projection = this._map.getMapType().getProjection();
         this._opts = {
             icon: null,
+            // TODO: 可动态设置速度
             speed: 4000,
             defaultContent: '',
-            showInfoWindow: false
+            showInfoWindow: false,
+            landmarkPois: [],
+            // 是否需要移动轨迹
+            showPolyline: false,
+            // 移动轨迹配置
+            polylineOptions: {}
         };
         this._setOptions(opts);
         this._rotation = 0;
@@ -195,7 +201,10 @@
             if (!me._fromPause) {
                 return;
             }else if(!me._fromStop){
-	            me._moveNext(++me.i);
+                // FIX: 每次添加一个点时不会移动 先把当前值赋值给函数，在自加一
+                // me._moveNext(me.i)
+                // me.i++
+                me._moveNext(me.i++);
             }
         }else {
             !me._marker && me._addMarker();
@@ -208,9 +217,10 @@
         this._fromStop = false;
     },
     LuShu.prototype.stop = function() {
+        this._clearIntervalFlag = true;
+
         this.i = 0;
         this._fromStop = true;
-        clearInterval(this._intervalFlag);
         this._clearTimeout();
         for (var i = 0, t = this._opts.landmarkPois, len = t.length; i < len; i++) {
             t[i].bShow = false;
@@ -218,7 +228,8 @@
         this._opts.onstop && this._opts.onstop(this)
     };
     LuShu.prototype.pause = function() {
-        clearInterval(this._intervalFlag);
+        this._clearIntervalFlag = true;
+
         this._fromPause = true;
         this._clearTimeout();
         this._opts.onpause && this._opts.onpause(this)
@@ -232,7 +243,8 @@
         this._overlay && (this._overlay._div.style.visibility = 'visible');
     };
     LuShu.prototype.dispose = function () {
-        clearInterval(this._intervalFlag);
+        me._clearIntervalFlag = true;
+
         this._setTimeoutQuene && this._clearTimeout();
         if (this._map) {
             this._map.removeOverlay(this._overlay);
@@ -268,6 +280,13 @@
         _getDistance: function(pxA, pxB) {
             return Math.sqrt(Math.pow(pxA.x - pxB.x, 2) + Math.pow(pxA.y - pxB.y, 2));
         },
+        _addPolyline: function(linePoints) {
+            var me = this;
+            var polyline = new BMap.Polyline(linePoints, me._opts.polylineOptions);
+            me._map.addOverlay(polyline);
+
+            return polyline;
+        },
         _move: function(initPos,targetPos,effect) {
             var me = this,
                 currentCount = 0,
@@ -280,14 +299,49 @@
                 me._moveNext(++me.i);
                 return;
             }
+
+            var lastPolyline;
+
+            function removeAndAddPolyline(linePoints) {
+                if (!me._opts.showPolyline) {
+                    return
+                }
+                if (lastPolyline) {
+                    me._map.removeOverlay(lastPolyline);
+                }
+
+                lastPolyline = me._addPolyline(linePoints);
+            }
+
+            function clearIntervalFlag() {
+                clearInterval(me._intervalFlag);
+                me._clearIntervalFlag = false;
+            }
+
+            // 上次结尾与本次开头的连线
+            if (me._lastTargetPos) {
+                me._addPolyline([me._lastTargetPos, initPos]);
+            }
+
+            clearIntervalFlag();
+
             me._intervalFlag = setInterval(function() {
-	            if (currentCount >= count) {
-	                clearInterval(me._intervalFlag);
-		        	if(me.i > me._path.length){
-						return;
-		        	}
-	                me._moveNext(++me.i);
-	            } else {
+                if (me._clearIntervalFlag) {
+                    return clearIntervalFlag();
+                }
+                if (currentCount >= count) {
+                    clearIntervalFlag();
+                    if (me._opts.showPolyline) {
+                        removeAndAddPolyline([initPos, targetPos]);
+    
+                        me._lastTargetPos = targetPos;
+                    }
+
+                    if(me.i > me._path.length){
+                        return;
+                    }
+                    me._moveNext(++me.i);
+                } else {
                     currentCount++;
                     var x = effect(init_pos.x, target_pos.x, currentCount, count),
                         y = effect(init_pos.y, target_pos.y, currentCount, count),
@@ -308,8 +362,10 @@
                     }
                     me._marker.setPosition(pos);
                     me._setInfoWin(pos);
+
+                    removeAndAddPolyline([initPos, pos]);
                 }
-	        },timer);
+            },timer);
         },
         setRotation : function(prePos,curPos,targetPos){
             var me = this;
@@ -354,7 +410,8 @@
             if (index < this._path.length - 1) {
                 me._move(me._path[index], me._path[index + 1], me._tween.linear);
             } else {
-                me.stop()
+                // FIX: 停止会重置 i 暂停会比较好
+                me.pause();
             }
         },
         _setInfoWin: function(pos) {
@@ -362,7 +419,8 @@
             me._overlay.setPosition(pos, me._marker.getIcon().size);
             var index = me._troughPointIndex(pos);
             if (index != -1) {
-                clearInterval(me._intervalFlag);
+                me._clearIntervalFlag = true;
+
                 me._overlay.setHtml(me._opts.landmarkPois[index].html);
                 me._overlay.setPosition(pos, me._marker.getIcon().size);
                 me._pauseForView(index);
