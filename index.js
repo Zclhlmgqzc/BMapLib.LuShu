@@ -196,9 +196,11 @@
     LuShu.prototype.start = function() {
         var me = this,
             len = me._path.length;
-        this._opts.onstart && this._opts.onstart(me)
+        me._opts.onstart && me._opts.onstart(me)
+
         if (me.i && me.i < len - 1) {
-            if (!me._fromPause) {
+            // FIX: _intervalFlag 被清除后才可以继续执行
+            if (!me._fromPause && me._intervalFlag) {
                 return;
             }else if(!me._fromStop){
                 // FIX: 每次添加一个点时不会移动 先把当前值赋值给函数，在自加一
@@ -206,15 +208,18 @@
                 // me.i++
                 me._moveNext(me.i++);
             }
-        }else {
+        } else if(me._fromPause === false && me._fromStop === false) {
+            // FIX: me.i 0 -> 1 的过程中速度太慢的情况下 再次执行 start 会重新开始
+            return
+        } else {
             !me._marker && me._addMarker();
             me._timeoutFlag = setTimeout(function() {
                     !me._overlay && me._addInfoWin();
                     me._moveNext(me.i);
             },400);
         }
-        this._fromPause = false;
-        this._fromStop = false;
+        me._fromPause = false;
+        me._fromStop = false;
     },
     LuShu.prototype.stop = function() {
         this._clearIntervalFlag = true;
@@ -315,6 +320,7 @@
 
             function clearIntervalFlag() {
                 clearInterval(me._intervalFlag);
+                me._intervalFlag = undefined;
                 me._clearIntervalFlag = false;
             }
 
@@ -333,14 +339,16 @@
                     clearIntervalFlag();
                     if (me._opts.showPolyline) {
                         removeAndAddPolyline([initPos, targetPos]);
-    
+
                         me._lastTargetPos = targetPos;
                     }
 
-                    if(me.i > me._path.length){
-                        return;
+                    // FIX: 有数据才自增
+                    if (me.i <= me._path.length - 2) {
+                        me._moveNext(++me.i);
+                    } else {
+                        me.pause();
                     }
-                    me._moveNext(++me.i);
                 } else {
                     currentCount++;
                     var x = effect(init_pos.x, target_pos.x, currentCount, count),
